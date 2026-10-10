@@ -1,0 +1,11 @@
+{
+  "name": "tsh-frontend-vendor",
+  "private": true,
+  "description": "Pinned runtime libraries vendored into the SPA (no build step at runtime).",
+  "dependencies": {
+    "htm": "3.1.1",
+    "jsdom": "^25.0.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  }
+}

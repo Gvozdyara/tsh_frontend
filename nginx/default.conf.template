@@ -1,0 +1,72 @@
+# ---------------------------------------------------------------------------
+# nginx running *inside* the frontend container.
+#
+#  * serves the static SPA (plain React + htm, no build step)
+#  * proxies /api/ to the backend container using the DNS name taken from the
+#    compose environment (TSH_BACKEND_HOST / TSH_BACKEND_PORT)
+#  * the published port is the only entrypoint; the host nginx (or any other
+#    TLS terminator) proxies the public domain to it, see docs/nginx-host.conf
+# ---------------------------------------------------------------------------
+server {
+    listen       ${TSH_HTTP_PORT} default_server;
+    server_name  ${TSH_DOMAIN} localhost _;
+
+    root   /usr/share/nginx/html;
+    index  index.html;
+
+    # compose DNS + backend target, resolved per request
+    resolver ${TSH_RESOLVER} valid=10s ipv6=off;
+    set $backend "http://${TSH_BACKEND_HOST}:${TSH_BACKEND_PORT}";
+
+    client_max_body_size 64m;
+
+    gzip on;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+    gzip_min_length 1024;
+
+    # ---------------------------------------------------------------- health
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    # ------------------------------------------------------------ api proxy
+    location /api/ {
+        proxy_pass              $backend$request_uri;
+        proxy_http_version      1.1;
+        proxy_set_header        Host              $host;
+        proxy_set_header        X-Real-IP         $remote_addr;
+        proxy_set_header        X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header        X-Forwarded-Proto $scheme;
+        proxy_set_header        X-Forwarded-Host  $host;
+        proxy_set_header        Connection        "";
+        proxy_connect_timeout   5s;
+        proxy_send_timeout      60s;
+        proxy_read_timeout      60s;
+        proxy_buffering         off;
+    }
+
+    # ------------------------------------------------------------ SPA assets
+    location = /index.html {
+        add_header Cache-Control "no-store" always;
+        try_files $uri =404;
+    }
+
+    location /vendor/ {
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable";
+        try_files $uri =404;
+    }
+
+    # static entry point of the SPA
+    location = / {
+        add_header Cache-Control "no-store" always;
+        try_files /index.html =404;
+    }
+
+    location / {
+        add_header Cache-Control "no-store" always;
+        try_files $uri $uri/ /index.html;
+    }
+}
