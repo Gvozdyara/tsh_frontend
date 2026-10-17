@@ -128,22 +128,79 @@
 
   /* ------------------------------------------------------------ login view */
   function LoginScreen(props) {
-    var state = useState({ username: "", password: "" });
-    var form = state[0];
-    var setForm = state[1];
+    var config = props.config || {};
+    var registrationEnabled = config.registrationEnabled !== false;
+    var minPassword = config.minPasswordLength || 8;
+
+    var modeState = useState("login");
+    var mode = modeState[0];
+    var setMode = modeState[1];
+    var loginState = useState({ username: "", password: "" });
+    var loginForm = loginState[0];
+    var setLoginForm = loginState[1];
+    var registerState = useState({ username: "", password: "", confirm: "" });
+    var registerForm = registerState[0];
+    var setRegisterForm = registerState[1];
     var busy = useState(false);
     var pending = busy[0];
     var setPending = busy[1];
+    var localErrorState = useState("");
+    var localError = localErrorState[0];
+    var setLocalError = localErrorState[1];
+
+    function switchMode(next) {
+      if (pending || next === mode) return;
+      setMode(next);
+      setLocalError("");
+      if (props.onClearError) props.onClearError();
+    }
 
     function submit(event) {
       event.preventDefault();
       if (pending) return;
+      setLocalError("");
+
+      if (mode === "register") {
+        var username = registerForm.username.trim();
+        if (username.length < 3) {
+          setLocalError("Username must be at least 3 characters");
+          return;
+        }
+        if (/\s/.test(username)) {
+          setLocalError("Username must not contain spaces");
+          return;
+        }
+        if (registerForm.password.length < minPassword) {
+          setLocalError("Password must be at least " + minPassword + " characters");
+          return;
+        }
+        if (registerForm.password !== registerForm.confirm) {
+          setLocalError("The passwords do not match");
+          return;
+        }
+        setPending(true);
+        props
+          .onRegister(username, registerForm.password)
+          .then(function (result) {
+            setPending(false);
+            if (result && result.approved === false) {
+              setLoginForm({ username: username, password: "" });
+              setRegisterForm({ username: "", password: "", confirm: "" });
+              setMode("login");
+            }
+          })
+          .catch(function () { setPending(false); /* parent shows the error */ });
+        return;
+      }
+
       setPending(true);
       props
-        .onSubmit(form.username.trim(), form.password)
+        .onSubmit(loginForm.username.trim(), loginForm.password)
         .catch(function () { /* parent shows the error */ })
         .then(function () { setPending(false); });
     }
+
+    var errorText = props.error || localError;
 
     return html`<div className="login-screen">
       <form className="login-card" onSubmit=${submit}>
@@ -154,30 +211,85 @@
             <div className="brand-sub">${window.TSH_ENV.domain}</div>
           </div>
         </div>
-        <label className="field">
-          <span>User</span>
-          <input
-            autoFocus
-            autocomplete="username"
-            value=${form.username}
-            onInput=${function (e) { setForm(Object.assign({}, form, { username: e.target.value })); }} />
-        </label>
-        <label className="field">
-          <span>Password</span>
-          <input
-            type="password"
-            autocomplete="current-password"
-            value=${form.password}
-            onInput=${function (e) { setForm(Object.assign({}, form, { password: e.target.value })); }} />
-        </label>
-        <${Btn} type="submit" className="primary" disabled=${pending}>
-          ${pending ? "Signing in…" : "Sign in"}
-        <//>
-        <p className="hint">
-          Admin mode unlocks editing, moving and deleting articles.
-          Readers get the whole knowledge base read-only.
-        </p>
-        ${props.error ? html`<p className="login-error">${props.error}</p>` : null}
+
+        ${registrationEnabled
+          ? html`<div className="login-tabs">
+              <button
+                type="button"
+                className=${"login-tab" + (mode === "login" ? " is-active" : "")}
+                onClick=${function () { switchMode("login"); }}>Sign in</button>
+              <button
+                type="button"
+                className=${"login-tab" + (mode === "register" ? " is-active" : "")}
+                onClick=${function () { switchMode("register"); }}>Create account</button>
+            </div>`
+          : null}
+
+        ${mode === "register"
+          ? html`<${React.Fragment}>
+              <label className="field">
+                <span>User</span>
+                <input
+                  autoFocus
+                  type="text"
+                  autocomplete="username"
+                  value=${registerForm.username}
+                  onInput=${function (e) { setRegisterForm(Object.assign({}, registerForm, { username: e.target.value })); }} />
+              </label>
+              <label className="field">
+                <span>Password (min. ${minPassword} characters)</span>
+                <input
+                  type="password"
+                  autocomplete="new-password"
+                  value=${registerForm.password}
+                  onInput=${function (e) { setRegisterForm(Object.assign({}, registerForm, { password: e.target.value })); }} />
+              </label>
+              <label className="field">
+                <span>Repeat password</span>
+                <input
+                  type="password"
+                  autocomplete="new-password"
+                  value=${registerForm.confirm}
+                  onInput=${function (e) { setRegisterForm(Object.assign({}, registerForm, { confirm: e.target.value })); }} />
+              </label>
+              <${Btn} type="submit" className="primary" disabled=${pending}>
+                ${pending ? "Creating account…" : "Create account"}
+              <//>
+              <p className="hint">
+                New accounts start unapproved and cannot sign in until an
+                administrator approves them. Once approved they have read-only
+                access; an admin can also promote them to moderator or admin.
+              </p>
+            <//>`
+          : html`<${React.Fragment}>
+              <label className="field">
+                <span>User</span>
+                <input
+                  autoFocus
+                  type="text"
+                  autocomplete="username"
+                  value=${loginForm.username}
+                  onInput=${function (e) { setLoginForm(Object.assign({}, loginForm, { username: e.target.value })); }} />
+              </label>
+              <label className="field">
+                <span>Password</span>
+                <input
+                  type="password"
+                  autocomplete="current-password"
+                  value=${loginForm.password}
+                  onInput=${function (e) { setLoginForm(Object.assign({}, loginForm, { password: e.target.value })); }} />
+              </label>
+              <${Btn} type="submit" className="primary" disabled=${pending}>
+                ${pending ? "Signing in…" : "Sign in"}
+              <//>
+              <p className="hint">
+                <b>user</b> - read only · <b>moderator</b> - edit and move
+                articles · <b>admin</b> - full access, including users.
+              </p>
+            <//>`}
+
+        ${props.notice ? html`<p className="login-notice">${props.notice}</p>` : null}
+        ${errorText ? html`<p className="login-error">${errorText}</p>` : null}
       </form>
     </div>`;
   }
@@ -346,6 +458,9 @@
     if (!article) return html`<div className="content-empty muted">Select an article.</div>`;
     var children = article.children || [];
     var content = cleanSnippet(article.content || "");
+    var toc = "Содержание\n" + (children.length
+      ? children.map(function (child) { return child.position + ". " + child.name; }).join("\n")
+      : "1. Здесь пока пусто");
     return html`<section className="content">
       <div className="content-toolbar">
         <${LanguageSelectors}
@@ -353,7 +468,7 @@
           availableLanguages=${article.availableLanguages}
           onChange=${props.onLangChange} />
         <div className="content-actions">
-          ${props.admin
+          ${props.canEdit
             ? html`<${Btn} onClick=${props.onEdit} title="Edit this article">Edit<//>`
             : null}
           <button type="button" className="btn ghost" onClick=${props.onReport}>Suggest</button>
@@ -364,11 +479,7 @@
 
       <pre className="meta-line">${formatDate(article.createdAt)}; ${formatDate(article.updatedAt)} ${article.id}</pre>
       <pre className="meta-line">${article.parentName || "TSH"} / ${article.name}</pre>
-      <pre className="content-body">${content}</pre>
-      <pre className="toc">Содержание
-${children.length
-        ? children.map(function (child) { return child.position + ". " + child.name; }).join("\n")
-        : "1. Здесь пока пусто"}</pre>
+      <pre className="content-body">${content}${content ? "\n\n" : ""}${toc}</pre>
     </section>`;
   }
 
@@ -401,7 +512,9 @@ ${children.length
         <${Btn} onClick=${props.onCancel}>Cancel<//>
         <span className="spacer"></span>
         <${Btn} onClick=${props.onMoveStart} title="Move this article to another parent">Move<//>
-        <${Btn} className="danger" onClick=${props.onDeleteStart}>Delete<//>
+        ${props.canDelete
+          ? html`<${Btn} className="danger" onClick=${props.onDeleteStart}>Delete<//>`
+          : null}
       </div>
       <p className="hint">
         Links to other articles are written as <code>ищи &lt;name or id&gt;</code> on their own line.
@@ -421,6 +534,12 @@ ${children.length
     var loginErrorState = useState("");
     var loginError = loginErrorState[0];
     var setLoginError = loginErrorState[1];
+    var loginNoticeState = useState("");
+    var loginNotice = loginNoticeState[0];
+    var setLoginNotice = loginNoticeState[1];
+    var authConfigState = useState({ registrationEnabled: true, minPasswordLength: 8 });
+    var authConfig = authConfigState[0];
+    var setAuthConfig = authConfigState[1];
 
     var langState = useState(localStorage.getItem(LANG_KEY) || "ru");
     var lang = langState[0];
@@ -499,6 +618,9 @@ ${children.length
     var updatesState = useState(null);
     var updates = updatesState[0];
     var setUpdates = updatesState[1];
+    var usersState = useState(null);
+    var users = usersState[0];
+    var setUsers = usersState[1];
     var modalState = useState(null);
     var modal = modalState[0];
     var setModal = modalState[1];
@@ -511,6 +633,8 @@ ${children.length
     var setInstallable = installableState[1];
 
     var admin = !!(session && session.admin);
+    var canEdit = !!(session && (session.canEdit || session.admin || session.role === "moderator"));
+    var roleLabel = session ? (session.role || "user") : "";
 
     /* The article the right pane works on: the single-clicked preview when
      * present, otherwise the article the user navigated into. */
@@ -529,6 +653,9 @@ ${children.length
 
     /* ------------------------------------------------------------ session */
     useEffect(function () {
+      API.authConfig()
+        .then(function (payload) { setAuthConfig(payload || {}); })
+        .catch(function () { /* keep the permissive defaults */ });
       API.session()
         .then(function (payload) { setSession(payload); })
         .catch(function () { setSession(null); })
@@ -582,10 +709,29 @@ ${children.length
 
     function login(username, password) {
       setLoginError("");
+      setLoginNotice("");
       return API.login(username, password)
         .then(function (payload) { setSession(payload); setError(""); })
         .catch(function (err) {
           setLoginError(err.status === 401 ? "Invalid user or password" : err.message);
+          throw err;
+        });
+    }
+
+    function register(username, password) {
+      setLoginError("");
+      setLoginNotice("");
+      return API.register(username, password)
+        .then(function (payload) {
+          setLoginNotice(
+            payload && payload.message
+              ? payload.message
+              : "Account created - an administrator must approve it"
+          );
+          return payload;
+        })
+        .catch(function (err) {
+          setLoginError(err.status === 409 ? "This username is already taken" : err.message);
           throw err;
         });
     }
@@ -703,7 +849,7 @@ ${children.length
     /* ----------------------------------------------------------- mutations */
     function startEdit() {
       if (!displayed) return;
-      if (!admin) { report(new Error("Admin mode is required to edit articles")); return; }
+      if (!canEdit) { report(new Error("Moderator rights are required to edit articles")); return; }
       var mine = (displayed.translations || []).filter(function (t) {
         return t.lang === displayed.lang;
       })[0] || { name: "", content: "" };
@@ -739,7 +885,7 @@ ${children.length
 
     function requestMove() {
       if (!displayed) return;
-      if (!admin) { report(new Error("Admin mode is required to move articles")); return; }
+      if (!canEdit) { report(new Error("Moderator rights are required to move articles")); return; }
       setMode("move");
       setMoveTarget(displayed.parentId || "00000001");
       flash("Select the new parent and press Select");
@@ -764,6 +910,7 @@ ${children.length
       var name = newName.trim();
       if (!name) { flash("Enter the article name first"); return; }
       if (!current) return;
+      if (!canEdit) { report(new Error("Moderator rights are required to add articles")); return; }
       API.createArticle({
         name: name,
         parentId: current.id,
@@ -780,6 +927,7 @@ ${children.length
 
     function confirmDelete() {
       if (!displayed) return;
+      if (!admin) { setModal(null); report(new Error("Admin rights are required to delete articles")); return; }
       var target = displayed;
       var wasPreview = !!preview;
       API.deleteArticle(target.id)
@@ -791,6 +939,63 @@ ${children.length
           loadArticle(wasPreview && current ? current.id : "00000001");
         })
         .catch(function (err) { setModal(null); report(err); });
+    }
+
+    /* --------------------------------------------------------------- users */
+    function openUsers() {
+      setMenu(false);
+      API.users()
+        .then(function (payload) { setUsers(payload.users || []); setModal("users"); })
+        .catch(report);
+    }
+
+    function refreshUsers() {
+      return API.users()
+        .then(function (payload) { setUsers(payload.users || []); })
+        .catch(report);
+    }
+
+    function changeUserRole(user, role) {
+      if (user.role === role) return;
+      API.updateUser(user.username, { role: role })
+        .then(function () {
+          flash("Role of " + user.username + " set to " + role);
+          return refreshUsers();
+        })
+        .then(function () {
+          if (session && user.username === session.username) {
+            return API.session().then(setSession).catch(function () { setSession(null); });
+          }
+        })
+        .catch(function (err) { report(err); refreshUsers(); });
+    }
+
+    function toggleUserActive(user) {
+      API.updateUser(user.username, { active: !user.active })
+        .then(function () {
+          flash(user.username + (user.active ? " deactivated" : " activated"));
+          return refreshUsers();
+        })
+        .then(function () {
+          if (session && user.username === session.username) {
+            return API.session().then(setSession).catch(function () { setSession(null); });
+          }
+        })
+        .catch(function (err) { report(err); refreshUsers(); });
+    }
+
+    function toggleUserApproval(user) {
+      API.updateUser(user.username, { approved: !user.approved })
+        .then(function () {
+          flash(user.username + (user.approved ? " approval revoked" : " approved"));
+          return refreshUsers();
+        })
+        .then(function () {
+          if (session && user.username === session.username) {
+            return API.session().then(setSession).catch(function () { setSession(null); });
+          }
+        })
+        .catch(function (err) { report(err); refreshUsers(); });
     }
 
     /* ---------------------------------------------------------------- misc */
@@ -872,7 +1077,13 @@ ${children.length
 
     if (!session) {
       return html`<${React.Fragment}>
-        <${LoginScreen} onSubmit=${login} error=${loginError} />
+        <${LoginScreen}
+          onSubmit=${login}
+          onRegister=${register}
+          error=${loginError}
+          notice=${loginNotice}
+          config=${authConfig}
+          onClearError=${function () { setLoginError(""); setLoginNotice(""); }} />
         <${Toast} message=${toast} />
       <//>`;
     }
@@ -935,15 +1146,21 @@ ${children.length
                 Install app
               </button>
               <div className="dropdown-divider"></div>
-              <button type="button" className="dropdown-item" onClick=${exportBackup}>Export JSON</button>
               ${admin
-                ? html`<button type="button" className="dropdown-item" onClick=${function () { importRef.current.click(); }}>
-                    Import JSON…
-                  </button>`
+                ? html`<${React.Fragment}>
+                    <button type="button" className="dropdown-item" onClick=${openUsers}>
+                      Users & access levels
+                    </button>
+                    <button type="button" className="dropdown-item" onClick=${exportBackup}>Export JSON</button>
+                    <button type="button" className="dropdown-item" onClick=${function () { importRef.current.click(); }}>
+                      Import JSON…
+                    </button>
+                  <//>`
                 : null}
               <div className="dropdown-divider"></div>
               <div className="dropdown-note">
-                User: ${session.username} · ${admin ? "admin mode" : "read only"}
+                User: ${session.username} · ${roleLabel}
+                ${canEdit ? " · editing enabled" : " · read only"}
               </div>
               <button type="button" className="dropdown-item" onClick=${logout}>Sign out</button>
             </div>` : null}
@@ -993,12 +1210,12 @@ ${children.length
           className="add-input"
           placeholder=${current ? "New article inside “" + current.name + "”" : "Open a folder to add an article"}
           value=${newName}
-          disabled=${!admin || !current}
+          disabled=${!canEdit || !current}
           onInput=${function (e) { setNewName(e.target.value); }}
           onKeyDown=${function (e) { if (e.key === "Enter") createArticle(); }} />
         <${Btn}
-          disabled=${!admin || !current}
-          title=${admin ? "Create the article here" : "Admin mode is required"}
+          disabled=${!canEdit || !current}
+          title=${canEdit ? "Create the article here" : "Moderator rights are required"}
           onClick=${createArticle}>Add article<//>
       </div>
 
@@ -1008,12 +1225,12 @@ ${children.length
           className=${inEdit ? "" : "primary"}
           disabled=${!displayed}
           onClick=${inEdit ? saveEdit : startEdit}
-          title=${admin ? "" : "Admin mode is required to edit"}>
+          title=${canEdit ? "" : "Moderator rights are required to edit"}>
           ${inEdit ? "Save" : "Edit"}
         <//>
         ${inMove
           ? html`<${Btn} className="warn" onClick=${confirmMove}>Select<//>`
-          : html`<${Btn} className="warn" onClick=${requestMove} disabled=${!displayed}>Move<//>`}
+          : html`<${Btn} className="warn" onClick=${requestMove} disabled=${!displayed || !canEdit}>Move<//>`}
         <div className="directory-label" title=${headerText + " / " + currentLabel}>
           <span className="dir-parent">${headerText}</span>
           <span className="dir-sep">/</span>
@@ -1048,11 +1265,12 @@ ${children.length
                 onSave=${saveEdit}
                 onCancel=${function () { setMode("browse"); setDraft(null); }}
                 onMoveStart=${requestMove}
+                canDelete=${admin}
                 onDeleteStart=${function () { setModal("delete"); }} />`
             : html`<${ArticleBody}
                 article=${displayed}
                 lang=${lang}
-                admin=${admin}
+                canEdit=${canEdit}
                 onEdit=${startEdit}
                 onLangChange=${changeLang}
                 onOpen=${openArticle}
@@ -1061,7 +1279,7 @@ ${children.length
       </main>
 
       <footer className="statusbar">
-        <span>${session.username} · ${admin ? "admin" : "reader"} · ${lang}</span>
+        <span>${session.username} · ${roleLabel} · ${lang}</span>
         <span className="spacer"></span>
         <span>${childrenItems.length} item(s) in the inner layer</span>
       </footer>
@@ -1100,6 +1318,63 @@ ${children.length
             </div>
             <div className="modal-actions">
               <${Btn} className="primary" onClick=${markUpdatesRead}>Mark as read<//>
+              <${Btn} onClick=${function () { setModal(null); }}>Close<//>
+            </div>
+          <//>`
+        : null}
+
+      ${modal === "users" && users
+        ? html`<${Modal} title="Users and access levels" onClose=${function () { setModal(null); }}>
+            <p className="muted">
+              <b>user</b> - read only · <b>moderator</b> - create, edit, move
+              (no delete) · <b>admin</b> - full access, including this list.
+              Self-registered accounts stay <b>pending approval</b> and cannot
+              sign in until approved here.
+            </p>
+            <div className="users-list">
+              ${users.map(function (user) {
+                var isSelf = session && user.username === session.username;
+                return html`<div className=${"users-row" + (user.approved ? "" : " is-pending")} key=${user.username}>
+                  <span className="users-name">
+                    ${user.username}${isSelf ? " (you)" : ""}
+                    <span className="users-meta">
+                      ${user.approved
+                        ? (user.active ? "approved · active" : "approved · disabled")
+                        : "pending approval"}
+                      ${user.lastLoginAt ? " · last login " + formatDate(user.lastLoginAt) : ""}
+                    </span>
+                  </span>
+                  <select
+                    className="users-role"
+                    value=${user.role}
+                    disabled=${isSelf}
+                    title=${isSelf ? "You cannot change your own role here" : "Change access level"}
+                    onChange=${function (event) { changeUserRole(user, event.target.value); }}>
+                    <option value="user">user</option>
+                    <option value="moderator">moderator</option>
+                    <option value="admin">admin</option>
+                  </select>
+                  <${Btn}
+                    className=${user.approved ? "warn" : "primary"}
+                    disabled=${isSelf}
+                    title=${isSelf
+                      ? "You cannot change your own approval"
+                      : (user.approved ? "Revoke approval and sign the account out" : "Approve this account")}
+                    onClick=${function () { toggleUserApproval(user); }}>
+                    ${user.approved ? "Revoke" : "Approve"}
+                  <//>
+                  <${Btn}
+                    className=${user.active ? "danger" : ""}
+                    disabled=${isSelf}
+                    title=${isSelf ? "You cannot disable your own account" : ""}
+                    onClick=${function () { toggleUserActive(user); }}>
+                    ${user.active ? "Disable" : "Enable"}
+                  <//>
+                </div>`;
+              })}
+            </div>
+            <div className="modal-actions">
+              <${Btn} className="primary" onClick=${refreshUsers}>Refresh<//>
               <${Btn} onClick=${function () { setModal(null); }}>Close<//>
             </div>
           <//>`

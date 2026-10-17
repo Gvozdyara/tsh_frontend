@@ -62,11 +62,20 @@
 
     health: function () { return request("GET", "/health"); },
 
+    authConfig: function () { return request("GET", "/auth/config"); },
+    register: function (username, password) {
+      return request("POST", "/auth/register", { body: { username: username, password: password } });
+    },
     login: function (username, password) {
       return request("POST", "/auth/login", { body: { username: username, password: password } });
     },
     logout: function () { return request("POST", "/auth/logout"); },
     session: function () { return request("GET", "/auth/session"); },
+
+    users: function () { return request("GET", "/users"); },
+    updateUser: function (username, payload) {
+      return request("PATCH", "/users/" + encodeURIComponent(username), { body: payload });
+    },
 
     langs: function () { return request("GET", "/langs"); },
     tree: function (lang) { return request("GET", "/tree", { query: { lang: lang } }); },

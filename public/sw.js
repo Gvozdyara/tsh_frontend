@@ -12,7 +12,7 @@
  * =========================================================================== */
 "use strict";
 
-var VERSION = "tsh-v1";
+var VERSION = "tsh-v3";
 var SHELL_CACHE = VERSION + "-shell";
 var RUNTIME_CACHE = VERSION + "-runtime";
 
