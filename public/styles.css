@@ -254,6 +254,14 @@ input:focus, textarea:focus { outline: 1px solid var(--accent-dim); }
 }
 .dir-sep { color: var(--border); margin: 0 4px; }
 .dir-current { color: var(--accent); }
+.move-hint {
+  font-size: 12px;
+  color: var(--warn);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 32%;
+}
 
 .body {
   flex: 1 1 auto;

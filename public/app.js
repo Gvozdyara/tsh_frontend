@@ -566,6 +566,12 @@
     var modeState = useState("browse");
     var mode = modeState[0];
     var setMode = modeState[1];
+    /* Move mode: `moveSource` is the article being moved, captured when the
+     * mode starts, so browsing the tree cannot change the subject of the move.
+     * `moveTarget` is the destination folder as { id, name }. */
+    var moveSourceState = useState(null);
+    var moveSource = moveSourceState[0];
+    var setMoveSource = moveSourceState[1];
     var moveTargetState = useState(null);
     var moveTarget = moveTargetState[0];
     var setMoveTarget = moveTargetState[1];
@@ -770,10 +776,16 @@
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [session]);
 
-    function openArticle(id) {
+    /* `options.keepMode` navigates without leaving the current mode, so the
+     * Back button can walk the tree while a move is in progress. */
+    function openArticle(id, options) {
+      var keepMode = !!(options && options.keepMode);
       setTree(false);
-      setMode("browse");
-      setMoveTarget(null);
+      if (!keepMode) {
+        setMode("browse");
+        setMoveSource(null);
+        setMoveTarget(null);
+      }
       setSearchResult(null);
       setNewName("");
       loadArticle(id);
@@ -803,15 +815,17 @@
     }
 
     function goBack() {
-      if (mode === "move") { setMode("browse"); setMoveTarget(null); return; }
       if (mode === "edit") { setMode("browse"); setDraft(null); return; }
-      if (preview) { setPreview(null); return; }
+      /* Moving is a mode the user leaves explicitly (Select or Escape): Back
+       * walks up the tree but keeps both the mode and the chosen target. */
+      var keepMode = mode === "move";
+      if (!keepMode && preview) { setPreview(null); return; }
       if (!current) return;
       if (current.isRoot) { loadArticle(current.id); return; }
       var chain = current.breadcrumbs || [];
       var parent = chain.length >= 2 ? chain[chain.length - 2] : null;
-      if (parent) openArticle(parent.id);
-      else openArticle("00000001");
+      if (parent) openArticle(parent.id, { keepMode: keepMode });
+      else openArticle("00000001", { keepMode: keepMode });
     }
 
     /* ------------------------------------------------------------- search */
@@ -886,22 +900,41 @@
     function requestMove() {
       if (!displayed) return;
       if (!canEdit) { report(new Error("Moderator rights are required to move articles")); return; }
+      var chain = displayed.breadcrumbs || [];
+      var parent = chain.length >= 2 ? chain[chain.length - 2] : null;
+      var parentId = displayed.parentId || (parent ? parent.id : "00000001") || "00000001";
+      setMoveSource({
+        id: displayed.id,
+        name: displayed.name,
+        lang: displayed.lang,
+        parentId: parentId
+      });
+      setMoveTarget({ id: parentId, name: parent ? parent.name : parentId });
       setMode("move");
-      setMoveTarget(displayed.parentId || "00000001");
-      flash("Select the new parent and press Select");
+      flash("Pick the new parent folder in the list, then press Select");
+    }
+
+    /* Leave move mode without changing anything (Cancel button / Escape). */
+    function cancelMove() {
+      setMode("browse");
+      setMoveSource(null);
+      setMoveTarget(null);
     }
 
     function confirmMove() {
-      if (!displayed || !moveTarget) return;
-      if (moveTarget === displayed.id) { report(new Error("An article cannot be its own parent")); return; }
-      var target = displayed;
+      if (!moveSource || !moveTarget) return;
+      if (moveTarget.id === moveSource.id) { report(new Error("An article cannot be its own parent")); return; }
+      var source = moveSource;
+      var destination = moveTarget;
       var wasPreview = !!preview;
-      API.moveArticle(target.id, moveTarget, target.lang)
+      API.moveArticle(source.id, destination.id, source.lang)
         .then(function () {
-          setMode("browse");
-          flash("Moved");
+          /* The source is captured above: Back navigation may have changed
+           * `displayed`/`current` since the move started. */
+          cancelMove();
+          flash("Moved “" + source.name + "” to “" + destination.name + "”");
           setPreview(null);
-          loadArticle(wasPreview && current ? current.id : target.id);
+          loadArticle(wasPreview && current ? current.id : destination.id);
         })
         .catch(report);
     }
@@ -1029,6 +1062,8 @@
           setCurrent(null);
           setChildrenItems(payload.articles || []);
           setMode("browse");
+          setMoveSource(null);
+          setMoveTarget(null);
           setLoading(false);
         })
         .catch(report);
@@ -1056,10 +1091,10 @@
       function onKey(event) {
         if (event.key === "Escape") {
           if (modal) { setModal(null); return; }
-          if (mode !== "browse") { setMode("browse"); setDraft(null); setMoveTarget(null); return; }
+          if (mode !== "browse") { cancelMove(); setDraft(null); return; }
           if (preview) { setPreview(null); return; }
         }
-        if (event.key === "Backspace" && mode === "browse") {
+        if (event.key === "Backspace" && (mode === "browse" || mode === "move")) {
           var tag = (event.target.tagName || "").toLowerCase();
           if (tag === "input" || tag === "textarea") return;
           event.preventDefault();
@@ -1229,13 +1264,21 @@
           ${inEdit ? "Save" : "Edit"}
         <//>
         ${inMove
-          ? html`<${Btn} className="warn" onClick=${confirmMove}>Select<//>`
+          ? html`<${React.Fragment}>
+              <${Btn} className="warn" onClick=${confirmMove} disabled=${!moveTarget} title="Move the article into the selected folder">Select<//>
+              <${Btn} onClick=${cancelMove} title="Leave move mode without changes (Escape)">Cancel<//>
+            <//>`
           : html`<${Btn} className="warn" onClick=${requestMove} disabled=${!displayed || !canEdit}>Move<//>`}
         <div className="directory-label" title=${headerText + " / " + currentLabel}>
           <span className="dir-parent">${headerText}</span>
           <span className="dir-sep">/</span>
           <span className="dir-current">${currentLabel}</span>
         </div>
+        ${inMove && moveSource
+          ? html`<span className="move-hint" title="Moving this article into the selected folder">
+              moving <b>${moveSource.name}</b> → <b>${moveTarget ? moveTarget.name : "—"}</b>
+            </span>`
+          : null}
         <span className="spacer"></span>
         <${Btn} onClick=${openTree}>Contents<//>
       </div>
@@ -1251,8 +1294,8 @@
                 items=${childrenItems}
                 loading=${loading}
                 selectedId=${displayed ? displayed.id : null}
-                onPick=${function (item) { if (inMove) { setMoveTarget(item.id); } else { previewArticle(item.id); } }}
-                onOpen=${function (item) { if (inMove) { setMoveTarget(item.id); } else { openArticle(item.id); } }} />`}
+                onPick=${function (item) { if (inMove) { setMoveTarget({ id: item.id, name: item.name }); } else { previewArticle(item.id); } }}
+                onOpen=${function (item) { if (inMove) { setMoveTarget({ id: item.id, name: item.name }); } else { openArticle(item.id); } }} />`}
         </section>
         <section className="right">
           ${inEdit && draft
