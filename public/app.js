@@ -244,7 +244,7 @@
           type="button"
           key=${(item.id || "") + "-" + index}
           className=${"article-row" + (props.selectedId === item.id ? " is-selected" : "")}
-          onClick=${function () { props.onSelect(item); }}
+          onClick=${function () { props.onPick(item); }}
           onDoubleClick=${function () { props.onOpen(item); }}>
           <span className="article-row-name">${item.name}</span>
           ${item.child_count
@@ -437,6 +437,13 @@ ${children.length
     var childrenItems = childrenItemsState[0];
     var setChildrenItems = childrenItemsState[1];
 
+    /* Article shown in the right pane after a single click in ArticleList.
+     * It never replaces `current`, so the left list keeps the current
+     * folder's items; a double click (openArticle) clears it and navigates. */
+    var previewState = useState(null);
+    var preview = previewState[0];
+    var setPreview = previewState[1];
+
     var modeState = useState("browse");
     var mode = modeState[0];
     var setMode = modeState[1];
@@ -497,8 +504,13 @@ ${children.length
     var setModal = modalState[1];
     var importRef = useRef(null);
     var searchAbort = useRef(null);
+    var previewSeq = useRef(0);
 
     var admin = !!(session && session.admin);
+
+    /* The article the right pane works on: the single-clicked preview when
+     * present, otherwise the article the user navigated into. */
+    var displayed = preview || current;
 
     function report(error_) {
       var message = error_ && error_.message ? error_.message : String(error_);
@@ -537,6 +549,8 @@ ${children.length
     var loadArticle = useCallback(
       function (id, language) {
         var target = language || lang;
+        setPreview(null);
+        previewSeq.current += 1;
         setLoading(true);
         return API.article(id, target)
           .then(function (article) {
@@ -570,15 +584,33 @@ ${children.length
       loadArticle(id);
     }
 
+    /* Single click: fetch the article and show it in ArticleBody, leaving
+     * the current folder, the left list and all modes untouched. */
+    function previewArticle(id, language) {
+      if (mode !== "browse") return;
+      var target = language || lang;
+      var seq = previewSeq.current + 1;
+      previewSeq.current = seq;
+      return API.article(id, target)
+        .then(function (article) {
+          if (seq === previewSeq.current) setPreview(article);
+        })
+        .catch(function (err) {
+          if (seq === previewSeq.current) report(err);
+        });
+    }
+
     function changeLang(next) {
       setLang(next);
       localStorage.setItem(LANG_KEY, next);
-      if (current) loadArticle(current.id, next);
+      if (preview) previewArticle(preview.id, next);
+      else if (current) loadArticle(current.id, next);
     }
 
     function goBack() {
       if (mode === "move") { setMode("browse"); setMoveTarget(null); return; }
       if (mode === "edit") { setMode("browse"); setDraft(null); return; }
+      if (preview) { setPreview(null); return; }
       if (!current) return;
       if (current.isRoot) { loadArticle(current.id); return; }
       var chain = current.breadcrumbs || [];
@@ -621,10 +653,10 @@ ${children.length
 
     /* ----------------------------------------------------------- mutations */
     function startEdit() {
-      if (!current) return;
+      if (!displayed) return;
       if (!admin) { report(new Error("Admin mode is required to edit articles")); return; }
-      var mine = (current.translations || []).filter(function (t) {
-        return t.lang === current.lang;
+      var mine = (displayed.translations || []).filter(function (t) {
+        return t.lang === displayed.lang;
       })[0] || { name: "", content: "" };
       setDraft({ name: mine.name || "", content: mine.content || "" });
       setMode("edit");
@@ -633,42 +665,48 @@ ${children.length
     }
 
     function saveEdit() {
-      if (!draft || !current) return;
+      if (!draft || !displayed) return;
+      var target = displayed;
+      var wasPreview = !!preview;
       setSaving(true);
       var payload = { translations: {} };
-      payload.translations[current.lang] = {
+      payload.translations[target.lang] = {
         name: draft.name,
         content: draft.content
       };
-      API.updateArticle(current.id, payload, current.lang)
+      API.updateArticle(target.id, payload, target.lang)
         .then(function (result) {
           setSaving(false);
           setMode("browse");
           setDraft(null);
           flash("Saved");
+          if (wasPreview) { setPreview(result.article); return; }
           setCurrent(result.article);
-          return API.children(current.id, current.lang);
+          return API.children(target.id, target.lang)
+            .then(function (items) { setChildrenItems(items || []); });
         })
-        .then(function (items) { setChildrenItems(items || []); })
         .catch(function (err) { setSaving(false); report(err); });
     }
 
     function requestMove() {
-      if (!current) return;
+      if (!displayed) return;
       if (!admin) { report(new Error("Admin mode is required to move articles")); return; }
       setMode("move");
-      setMoveTarget(current.parentId || "00000001");
+      setMoveTarget(displayed.parentId || "00000001");
       flash("Select the new parent and press Select");
     }
 
     function confirmMove() {
-      if (!current || !moveTarget) return;
-      if (moveTarget === current.id) { report(new Error("An article cannot be its own parent")); return; }
-      API.moveArticle(current.id, moveTarget, current.lang)
+      if (!displayed || !moveTarget) return;
+      if (moveTarget === displayed.id) { report(new Error("An article cannot be its own parent")); return; }
+      var target = displayed;
+      var wasPreview = !!preview;
+      API.moveArticle(target.id, moveTarget, target.lang)
         .then(function () {
           setMode("browse");
           flash("Moved");
-          loadArticle(current.id);
+          setPreview(null);
+          loadArticle(wasPreview && current ? current.id : target.id);
         })
         .catch(report);
     }
@@ -692,13 +730,16 @@ ${children.length
     }
 
     function confirmDelete() {
-      if (!current) return;
-      API.deleteArticle(current.id)
+      if (!displayed) return;
+      var target = displayed;
+      var wasPreview = !!preview;
+      API.deleteArticle(target.id)
         .then(function () {
           setModal(null);
           setMode("browse");
+          setPreview(null);
           flash("Deleted");
-          loadArticle("00000001");
+          loadArticle(wasPreview && current ? current.id : "00000001");
         })
         .catch(function (err) { setModal(null); report(err); });
     }
@@ -728,6 +769,7 @@ ${children.length
       setMenu(false);
       setSearchResult(null);
       setSearchText("");
+      setPreview(null);
       API.articles(lang, 2000)
         .then(function (payload) {
           setCurrent(null);
@@ -761,6 +803,7 @@ ${children.length
         if (event.key === "Escape") {
           if (modal) { setModal(null); return; }
           if (mode !== "browse") { setMode("browse"); setDraft(null); setMoveTarget(null); return; }
+          if (preview) { setPreview(null); return; }
         }
         if (event.key === "Backspace" && mode === "browse") {
           var tag = (event.target.tagName || "").toLowerCase();
@@ -907,14 +950,14 @@ ${children.length
         <${Btn} onClick=${goBack} title="Back (Backspace)">Back<//>
         <${Btn}
           className=${inEdit ? "" : "primary"}
-          disabled=${!current}
+          disabled=${!displayed}
           onClick=${inEdit ? saveEdit : startEdit}
           title=${admin ? "" : "Admin mode is required to edit"}>
           ${inEdit ? "Save" : "Edit"}
         <//>
         ${inMove
           ? html`<${Btn} className="warn" onClick=${confirmMove}>Select<//>`
-          : html`<${Btn} className="warn" onClick=${requestMove} disabled=${!current}>Move<//>`}
+          : html`<${Btn} className="warn" onClick=${requestMove} disabled=${!displayed}>Move<//>`}
         <div className="directory-label" title=${headerText + " / " + currentLabel}>
           <span className="dir-parent">${headerText}</span>
           <span className="dir-sep">/</span>
@@ -934,14 +977,14 @@ ${children.length
             : html`<${ArticleList}
                 items=${childrenItems}
                 loading=${loading}
-                selectedId=${current ? current.id : null}
-                onSelect=${function (item) { if (inMove) { setMoveTarget(item.id); } }}
+                selectedId=${displayed ? displayed.id : null}
+                onPick=${function (item) { if (inMove) { setMoveTarget(item.id); } else { previewArticle(item.id); } }}
                 onOpen=${function (item) { if (inMove) { setMoveTarget(item.id); } else { openArticle(item.id); } }} />`}
         </section>
         <section className="right">
           ${inEdit && draft
             ? html`<${Editor}
-                article=${current}
+                article=${displayed}
                 draft=${draft}
                 lang=${lang}
                 saving=${saving}
@@ -951,7 +994,7 @@ ${children.length
                 onMoveStart=${requestMove}
                 onDeleteStart=${function () { setModal("delete"); }} />`
             : html`<${ArticleBody}
-                article=${current}
+                article=${displayed}
                 lang=${lang}
                 admin=${admin}
                 onEdit=${startEdit}
@@ -977,7 +1020,7 @@ ${children.length
 
       ${modal === "delete"
         ? html`<${Modal} title="Confirm deletion" onClose=${function () { setModal(null); }}>
-            <p>Delete <b>${current ? current.name : ""}</b> and all nested articles?</p>
+            <p>Delete <b>${displayed ? displayed.name : ""}</b> and all nested articles?</p>
             <div className="modal-actions">
               <${Btn} className="danger" onClick=${confirmDelete}>Yes, delete<//>
               <${Btn} onClick=${function () { setModal(null); }}>No<//>
@@ -1012,12 +1055,12 @@ ${children.length
               Copy the article text and send it to the maintainers
               (Telegram: @gvozdyaraara).
             </p>
-            <textarea className="report-area" readOnly value=${current ? cleanSnippet(current.content) : ""}></textarea>
+            <textarea className="report-area" readOnly value=${displayed ? cleanSnippet(displayed.content) : ""}></textarea>
             <div className="modal-actions">
               <${Btn}
                 className="primary"
                 onClick=${function () {
-                  var text = current ? cleanSnippet(current.content) : "";
+                  var text = displayed ? cleanSnippet(displayed.content) : "";
                   if (navigator.clipboard) navigator.clipboard.writeText(text);
                   window.open("https://t.me/gvozdyaraara", "_blank");
                 }}>Copy and open Telegram<//>
