@@ -59,6 +59,28 @@ server {
         try_files $uri =404;
     }
 
+    # ------------------------------------------------------- installable PWA
+    # nginx:alpine has no webmanifest type in mime.types; the types directive
+    # is local to this location, so the rest of the mapping is untouched
+    location = /manifest.webmanifest {
+        types { application/manifest+json webmanifest; }
+        add_header Cache-Control "no-cache" always;
+        try_files $uri =404;
+    }
+
+    # the service worker must never be cached, otherwise updates are delayed
+    location = /sw.js {
+        add_header Cache-Control "no-store" always;
+        add_header Service-Worker-Allowed "/" always;
+        try_files $uri =404;
+    }
+
+    location /icons/ {
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800";
+        try_files $uri =404;
+    }
+
     # static entry point of the SPA
     location = / {
         add_header Cache-Control "no-store" always;

@@ -505,6 +505,10 @@ ${children.length
     var importRef = useRef(null);
     var searchAbort = useRef(null);
     var previewSeq = useRef(0);
+    var installEvent = useRef(null);
+    var installableState = useState(false);
+    var installable = installableState[0];
+    var setInstallable = installableState[1];
 
     var admin = !!(session && session.admin);
 
@@ -530,6 +534,51 @@ ${children.length
         .catch(function () { setSession(null); })
         .then(function () { setBooting(false); });
     }, []);
+
+    /* ------------------------------------------------- installable web app */
+    useEffect(function () {
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("/sw.js").catch(function (err) {
+          window.TSH_LOG("service worker not registered:", err && err.message ? err.message : err);
+        });
+      }
+      function onBeforeInstall(event) {
+        /* keep the event so the Menu can trigger the browser install dialog */
+        event.preventDefault();
+        installEvent.current = event;
+        setInstallable(true);
+      }
+      function onInstalled() {
+        installEvent.current = null;
+        setInstallable(false);
+        flash("Installed - start it from your app list");
+      }
+      window.addEventListener("beforeinstallprompt", onBeforeInstall);
+      window.addEventListener("appinstalled", onInstalled);
+      return function () {
+        window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+        window.removeEventListener("appinstalled", onInstalled);
+      };
+    }, []);
+
+    function installApp() {
+      setMenu(false);
+      var event = installEvent.current;
+      if (!event) {
+        flash("Use the browser menu: “Install app” / “Add to Home Screen”");
+        return;
+      }
+      installEvent.current = null;
+      setInstallable(false);
+      event.prompt();
+      if (event.userChoice) {
+        event.userChoice
+          .then(function (choice) {
+            if (choice && choice.outcome === "accepted") flash("Installing…");
+          })
+          .catch(function () {});
+      }
+    }
 
     function login(username, password) {
       setLoginError("");
@@ -877,6 +926,13 @@ ${children.length
               <button type="button" className="dropdown-item" onClick=${showAll}>Show all</button>
               <button type="button" className="dropdown-item" onClick=${function () { setMenu(false); openTree(); }}>
                 Table of contents
+              </button>
+              <button
+                type="button"
+                className="dropdown-item"
+                title=${installable ? "Install this site as a standalone app" : "Use the browser menu: Install app / Add to Home Screen"}
+                onClick=${installApp}>
+                Install app
               </button>
               <div className="dropdown-divider"></div>
               <button type="button" className="dropdown-item" onClick=${exportBackup}>Export JSON</button>
